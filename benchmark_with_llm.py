@@ -12,7 +12,7 @@ from pinyinize.llm import OllamaLLMAdapter
 
 # Configuration
 DATASET_PATH = Path("Chinese-TTS-Dataset/Chinese Polyphonic Characters.json")
-MAX_CASES = 200
+MAX_CASES = 402
 OLLAMA_MODEL = "gemma3:1b"
 OLLAMA_HOST = "http://localhost:11434"
 OLLAMA_TIMEOUT_S = 120.0
