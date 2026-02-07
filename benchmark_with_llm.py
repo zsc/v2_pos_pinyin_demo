@@ -148,7 +148,12 @@ def main(argv: list[str] | None = None) -> int:
                 results["incorrect"] += 1
                 first_seg, first_norm = act_norms[0] if act_norms else (None, "")
                 first_seg_s = f" ({first_seg})" if first_seg else ""
-                status = "✗ FAIL: " + exp_norm + "\n" + (first_norm + first_seg_s)
+                
+                # Identify offending characters
+                offending = identify_offending_chars(text, expected, first_norm, act_norms[0][0] if act_norms else None)
+                offending_str = f" | Offending: {offending}" if offending else ""
+                
+                status = "✗ FAIL: " + exp_norm + "\n" + (first_norm + first_seg_s) + offending_str
                 if len(results["bad_cases"]) < 10:
                     act_norm = first_norm
                     diff_pos = 0
@@ -163,6 +168,7 @@ def main(argv: list[str] | None = None) -> int:
                             "expected": exp_norm[:50],
                             "actual": act_norm[:50],
                             "diff_at": diff_pos,
+                            "offending": offending,
                         }
                     )
 
@@ -197,6 +203,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"\n  {case['id']}: {case['text']}")
             print(f"    Expected: {case['expected']}")
             print(f"    Actual:   {case['actual']}")
+            if case.get("offending"):
+                print(f"    Offending: {case['offending']}")
 
     print("\n" + "=" * 70)
     print("NOTES")
@@ -300,6 +308,78 @@ def normalize_actual(actual: str) -> str:
     s = re.sub(r'[，。、；：？！""''（）【】《》]', '', actual)
     s = re.sub(r'\s+', '', s)
     return s.replace('v', 'ü').replace('ɡ', 'g')
+
+
+def identify_offending_chars(text: str, expected_pinyin: str, actual_norm: str, segmenter: str | None) -> str:
+    """Identify which Chinese characters have mismatched pinyin.
+    
+    Args:
+        text: Filtered Chinese text (may contain punctuation)
+        expected_pinyin: Original expected pinyin with tone numbers  
+        actual_norm: Normalized actual pinyin output (tone marks, no spaces)
+        segmenter: Segmenter name (unused, kept for compatibility)
+    
+    Returns:
+        String showing offending characters and their pinyin differences
+    """
+    # Clean expected pinyin and split into syllables
+    exp_clean = re.sub(r'[，。、；：？！""''（）【】《》]', ' ', expected_pinyin)
+    exp_clean = re.sub(r'[\s,;.!?"\'()[\]{}]+', ' ', exp_clean)
+    exp_syllables = [s for s in exp_clean.split() if s]
+    
+    # Convert expected syllables to tone marks
+    exp_marked_syllables = [num_to_mark(syl) for syl in exp_syllables]
+    
+    # Extract Han characters from text
+    han_chars = [ch for ch in text if '\u4e00' <= ch <= '\u9fff']
+    
+    # Build expected normalized string
+    exp_norm = ''.join(exp_marked_syllables)
+    
+    # Find first difference position
+    diff_pos = -1
+    for i, (e, a) in enumerate(zip(exp_norm, actual_norm)):
+        if e != a:
+            diff_pos = i
+            break
+    
+    if diff_pos == -1:
+        # Length mismatch
+        if len(exp_norm) != len(actual_norm):
+            diff_pos = min(len(exp_norm), len(actual_norm))
+        else:
+            return ""
+    
+    # Map diff_pos back to syllable index
+    cum_len = 0
+    offending_idx = -1
+    for i, syl in enumerate(exp_marked_syllables):
+        syl_len = len(syl)
+        if cum_len <= diff_pos < cum_len + syl_len:
+            offending_idx = i
+            break
+        cum_len += syl_len
+    
+    if offending_idx == -1 and exp_marked_syllables:
+        offending_idx = len(exp_marked_syllables) - 1
+    
+    # Collect mismatches starting from offending_idx
+    mismatches = []
+    for i in range(offending_idx, min(len(han_chars), len(exp_marked_syllables))):
+        exp_syl = exp_marked_syllables[i]
+        # Get actual syllable at this position
+        act_start = sum(len(exp_marked_syllables[j]) for j in range(i))
+        act_end = act_start + len(exp_syl)
+        act_syl = actual_norm[act_start:act_end] if act_start < len(actual_norm) else "?"
+        
+        if exp_syl != act_syl:
+            char = han_chars[i] if i < len(han_chars) else "?"
+            mismatches.append(f"{char}({exp_syl}≠{act_syl})")
+        
+        if len(mismatches) >= 3:
+            break
+    
+    return ", ".join(mismatches) if mismatches else ""
 
 
 def filter_text_and_pinyin(text: str, pinyin: str, chars_to_ignore: set[str]) -> tuple[str, str]:
