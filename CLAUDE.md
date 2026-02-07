@@ -571,7 +571,7 @@ yínháng hángzhǎng chóngxīn yíngyè，OpenAI API v2.0：https://openai.com
 
 ### 13.2 可选增强
 
-* `base_rules.json`：额外的自定义规则（用于复杂上下文模式，非必需）
+* `lexicon.json`：token->pinyin 补充词典（非必需）
 * `report.html`：可视化 debug（非必需）
 
 ---
@@ -595,13 +595,13 @@ yínháng hángzhǎng chóngxīn yíngyè，OpenAI API v2.0：https://openai.com
 ### 14.2 可扩展性
 
 * 增加 overrides.json 规则后，系统必须在不改代码情况下生效
-* overrides 的优先级必须高于 base_rules
+* overrides 的优先级必须高于自动消歧结果（词表/统计消歧等）
 
 ### 14.3 可追溯性
 
 * report 中必须能看到：
 
-  * 每个多音字最终读音来自：base_rule / override / llm_double_check / user / fallback
+  * 每个多音字最终读音来自：word / char_base / polyphone_disambig / override / llm_double_check / user / fallback
   * 命中的 rule_id（如适用）
   * 未解决项列表（如适用）
 
