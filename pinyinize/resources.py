@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .util import is_han
+from .util import is_han, normalize_pinyin
 
 
 def _load_word_pinyin_map(path: Path) -> dict[str, str]:
@@ -26,7 +26,7 @@ def _load_word_pinyin_map(path: Path) -> dict[str, str]:
                 continue
             if not all(is_han(ch) for ch in word):
                 continue
-            out[word] = pinyin
+            out[word] = normalize_pinyin(pinyin)
     return out
 
 
@@ -45,7 +45,7 @@ def _load_char_base(path: Path) -> dict[str, list[str]]:
             if isinstance(ch, str) and isinstance(pinyin, list) and all(
                 isinstance(x, str) for x in pinyin
             ):
-                out[ch] = list(pinyin)
+                out[ch] = [normalize_pinyin(x) for x in pinyin]
     return out
 
 
@@ -63,7 +63,7 @@ def _load_polyphone_candidates(path: Path) -> dict[str, list[str]]:
         if isinstance(ch, str) and isinstance(pinyin, list) and all(
             isinstance(x, str) for x in pinyin
         ):
-            out[ch] = list(pinyin)
+            out[ch] = [normalize_pinyin(x) for x in pinyin]
     return out
 
 
@@ -113,7 +113,7 @@ def _load_lexicon(path: Path) -> dict[str, str]:
                 if isinstance(w, str) and isinstance(p, str) and w and all(
                     is_han(ch) for ch in w
                 ):
-                    out[w] = p
+                    out[w] = normalize_pinyin(p)
         return out
     if isinstance(raw, dict):
         out2: dict[str, str] = {}
@@ -121,7 +121,7 @@ def _load_lexicon(path: Path) -> dict[str, str]:
             if isinstance(k, str) and isinstance(v, str) and k and all(
                 is_han(ch) for ch in k
             ):
-                out2[k] = v
+                out2[k] = normalize_pinyin(v)
         return out2
     return {}
 

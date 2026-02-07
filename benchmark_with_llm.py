@@ -37,6 +37,38 @@ opts = PinyinizeOptions(
 )
 
 # Tone conversion
+TONE_NUM_TO_MARK = {
+    ("a", "1"): "ā",
+    ("a", "2"): "á",
+    ("a", "3"): "ǎ",
+    ("a", "4"): "à",
+    ("e", "1"): "ē",
+    ("e", "2"): "é",
+    ("e", "3"): "ě",
+    ("e", "4"): "è",
+    ("i", "1"): "ī",
+    ("i", "2"): "í",
+    ("i", "3"): "ǐ",
+    ("i", "4"): "ì",
+    ("o", "1"): "ō",
+    ("o", "2"): "ó",
+    ("o", "3"): "ǒ",
+    ("o", "4"): "ò",
+    ("u", "1"): "ū",
+    ("u", "2"): "ú",
+    ("u", "3"): "ǔ",
+    ("u", "4"): "ù",
+    ("v", "1"): "ǖ",
+    ("v", "2"): "ǘ",
+    ("v", "3"): "ǚ",
+    ("v", "4"): "ǜ",
+    ("ü", "1"): "ǖ",
+    ("ü", "2"): "ǘ",
+    ("ü", "3"): "ǚ",
+    ("ü", "4"): "ǜ",
+}
+
+
 def num_to_mark(syllable: str) -> str:
     if not syllable:
         return syllable
@@ -46,29 +78,44 @@ def num_to_mark(syllable: str) -> str:
         tone = syllable[-1]
         syllable = syllable[:-1]
     
-    if not tone or tone in ('0', '5'):
-        return syllable.replace('v', 'ü').replace('ü', 'u')
-    
-    TONE_MAP = {
-        ('a', '1'): 'ā', ('a', '2'): 'á', ('a', '3'): 'ǎ', ('a', '4'): 'à',
-        ('e', '1'): 'ē', ('e', '2'): 'é', ('e', '3'): 'ě', ('e', '4'): 'è',
-        ('i', '1'): 'ī', ('i', '2'): 'í', ('i', '3'): 'ǐ', ('i', '4'): 'ì',
-        ('o', '1'): 'ō', ('o', '2'): 'ó', ('o', '3'): 'ǒ', ('o', '4'): 'ò',
-        ('u', '1'): 'ū', ('u', '2'): 'ú', ('u', '3'): 'ǔ', ('u', '4'): 'ù',
-        ('v', '1'): 'ǖ', ('v', '2'): 'ǘ', ('v', '3'): 'ǚ', ('v', '4'): 'ǜ',
-        ('ü', '1'): 'ǖ', ('ü', '2'): 'ǘ', ('ü', '3'): 'ǚ', ('ü', '4'): 'ǜ',
-    }
-    
-    for v in 'aeoivuü':
-        if v in syllable:
-            key = (v, tone)
-            if key in TONE_MAP:
-                return syllable.replace(v, TONE_MAP[key], 1).replace('v', 'ü')
-            break
-    return syllable.replace('v', 'ü')
+    syllable = syllable.replace("u:", "ü").replace("v", "ü")
+
+    if not tone or tone in ("0", "5"):
+        return syllable
+
+    s = syllable.lower()
+
+    def mark_at(idx: int) -> str:
+        v = syllable[idx]
+        marked = TONE_NUM_TO_MARK.get((v, tone)) or TONE_NUM_TO_MARK.get((v.lower(), tone))
+        if not marked:
+            return syllable
+        return syllable[:idx] + marked + syllable[idx + 1 :]
+
+    # Pinyin tone placement:
+    # 1) a/o/e take precedence
+    for v in ("a", "o", "e"):
+        pos = s.find(v)
+        if pos != -1:
+            return mark_at(pos)
+    # 2) iu/ui mark second vowel
+    pos = s.find("iu")
+    if pos != -1:
+        return mark_at(pos + 1)
+    pos = s.find("ui")
+    if pos != -1:
+        return mark_at(pos + 1)
+    # 3) otherwise mark the last vowel
+    vowels = "aeiouü"
+    last = -1
+    for i, ch in enumerate(s):
+        if ch in vowels:
+            last = i
+    return mark_at(last) if last != -1 else syllable
 
 def normalize_expected(expected: str) -> str:
-    s = re.sub(r'[，。、；：？！""''（）【】《》]', '', expected)
+    # Replace punctuation with spaces to avoid merging syllables like "jiao3，cheng2".
+    s = re.sub(r'[，。、；：？！“”‘’（）【】《》]', ' ', expected)
     s = re.sub(r'[\s,;.!?"\'()[\]{}]+', ' ', s)
     syllables = s.split()
     return ''.join(num_to_mark(syl) for syl in syllables if syl)
@@ -76,7 +123,7 @@ def normalize_expected(expected: str) -> str:
 def normalize_actual(actual: str) -> str:
     s = re.sub(r'[，。、；：？！""''（）【】《》]', '', actual)
     s = re.sub(r'\s+', '', s)
-    return s.replace('v', 'ü')
+    return s.replace('v', 'ü').replace('ɡ', 'g')
 
 # Run benchmark with progress reporting
 results = {
@@ -176,4 +223,3 @@ Common sources of mismatch:
 3. Multi-syllable words - segmentation may differ
 4. LLM segmentation errors - check llm_segment_and_tag in report
 """)
-

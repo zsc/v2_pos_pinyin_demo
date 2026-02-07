@@ -7,7 +7,7 @@ from .preprocess import split_spans
 from .resources import PinyinResources
 from .rules import AppliedRule, rule_matches, sort_rules
 from .types import CharDecision, Rule, Span, Token
-from .util import is_word_like_protected_kind, normalize_word_pinyin
+from .util import is_word_like_protected_kind, normalize_pinyin, normalize_word_pinyin
 
 
 _ALLOWED_UPOS = {
@@ -427,6 +427,7 @@ def _apply_overrides(
         rid = rule.get("id")
         if not isinstance(target, dict) or not isinstance(choose, str) or not isinstance(rid, str):
             continue
+        choose = normalize_pinyin(choose)
         target_char = target.get("char")
         occurrence = target.get("occurrence")
         if not isinstance(target_char, str) or not target_char:
@@ -654,14 +655,15 @@ def _apply_llm_double_check(
                     "char_offset_in_token": char_offset,
                     "char": dec.char,
                     "candidates": dec.candidates,
-                    "recommended": recommended,
+                    "recommended": normalize_pinyin(recommended) if isinstance(recommended, str) else recommended,
                     "reason": reason,
                 }
             )
             continue
 
         if isinstance(recommended, str) and recommended:
-            dec.chosen = recommended
+            recommended_norm = normalize_pinyin(recommended)
+            dec.chosen = recommended_norm
             dec.resolved_by = "llm_double_check"
             dec.needs_review = False
             if isinstance(reason, str) and reason:
@@ -672,7 +674,7 @@ def _apply_llm_double_check(
                     "token_index": token_index,
                     "char_offset_in_token": char_offset,
                     "char": dec.char,
-                    "recommended": recommended,
+                    "recommended": recommended_norm,
                     "reason": reason,
                 }
             )

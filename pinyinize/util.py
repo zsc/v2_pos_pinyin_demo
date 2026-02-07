@@ -41,10 +41,14 @@ def is_punct_or_symbol(ch: str) -> bool:
 
 def normalize_word_pinyin(pinyin: str) -> str:
     # Spec: remove syllable separator spaces; keep tone marks.
+    return normalize_pinyin(pinyin.replace(" ", ""))
+
+
+def normalize_pinyin(pinyin: str) -> str:
+    # Normalize IPA "ɡ" (U+0261) used in some datasets to ASCII "g".
     # Also normalize ü in case upstream uses v.
-    return pinyin.replace(" ", "").replace("v", "ü").replace("V", "Ü")
+    return pinyin.replace("ɡ", "g").replace("v", "ü").replace("V", "Ü")
 
 
 def is_word_like_protected_kind(kind: str | None) -> bool:
     return kind in {"url", "latin", "number"}
-
