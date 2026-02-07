@@ -154,6 +154,9 @@ def _tokens_from_spans_llm_or_fallback(
         meta["error"] = "llm_response_missing_spans"
         return _tokens_from_spans_fallback(spans, word_pinyin), meta
 
+    # Build span_id -> original Span lookup for validation
+    span_by_id: dict[str, Span] = {sp.span_id: sp for sp in han_spans}
+
     # span_id -> list[token dict]
     by_span_id: dict[str, list[dict[str, Any]]] = {}
     for s in resp_spans:
@@ -188,6 +191,30 @@ def _tokens_from_spans_llm_or_fallback(
             )
             cursor = end
 
+    def word_aware_segment(sp: Span) -> list[str]:
+        """Use word.json greedy matching first, then FMM for remaining."""
+        result: list[str] = []
+        i = 0
+        text = sp.text
+        n = len(text)
+        while i < n:
+            # Try longest word match first
+            max_len = max_len_by_fc.get(text[i], 1)
+            matched = None
+            for L in range(min(max_len, n - i), 0, -1):
+                cand = text[i : i + L]
+                if cand in word_pinyin:
+                    matched = cand
+                    break
+            if matched:
+                result.append(matched)
+                i += len(matched)
+            else:
+                # Single char if no word match
+                result.append(text[i])
+                i += 1
+        return result
+
     for sp in spans:
         if sp.type != "han":
             continue
@@ -218,29 +245,89 @@ def _tokens_from_spans_llm_or_fallback(
                 break
             texts.append(tt)
 
-        if not ok or "".join(texts) != sp.text:
+        # Use original span text from lookup (LLM may not echo it)
+        original_span = span_by_id.get(sp.span_id)
+        original_text = original_span.text if original_span else sp.text
+
+        if not ok or "".join(texts) != original_text:
             invalid_spans.append(sp.span_id)
             fallback_for_span(sp)
             continue
 
-        cursor = sp.start
-        for idx, t in enumerate(llm_toks):
-            tt = t["text"]
-            start = cursor
-            end = cursor + len(tt)
-            tokens.append(
-                Token(
-                    span_id=sp.span_id,
-                    index_in_span=idx,
-                    start=start,
-                    end=end,
-                    text=tt,
-                    upos=t["upos"],
-                    xpos=t["xpos"],
-                    ner=t["ner"],
+        # Check if LLM tokenization respects word boundaries from word.json
+        # If LLM splits a known word incorrectly, use word-aware segmentation
+        llm_texts = [t.get("text", "") for t in llm_toks]
+        word_based = word_aware_segment(sp)
+        
+        # Check if LLM violated any word boundaries
+        llm_valid = True
+        for word in word_based:
+            if len(word) > 1:  # Only check multi-char words
+                # Check if this word appears as a contiguous token in LLM output
+                found = False
+                for lt in llm_texts:
+                    if lt == word:
+                        found = True
+                        break
+                if not found:
+                    # Check if the word was split incorrectly
+                    llm_concat = "".join(llm_texts)
+                    word_idx = llm_concat.find(word)
+                    if word_idx >= 0:
+                        # Find which tokens cover this word
+                        pos = 0
+                        covering = []
+                        for lt in llm_texts:
+                            lt_start = pos
+                            lt_end = pos + len(lt)
+                            if lt_start < word_idx + len(word) and lt_end > word_idx:
+                                covering.append(lt)
+                            pos += len(lt)
+                        # If word is covered by multiple tokens, LLM split it wrong
+                        if len(covering) > 1:
+                            llm_valid = False
+                            break
+
+        if not llm_valid:
+            invalid_spans.append(sp.span_id)
+            # Use word-aware segmentation instead
+            seg = word_based
+            cursor = sp.start
+            for idx, t in enumerate(seg):
+                start = cursor
+                end = cursor + len(t)
+                tokens.append(
+                    Token(
+                        span_id=sp.span_id,
+                        index_in_span=idx,
+                        start=start,
+                        end=end,
+                        text=t,
+                        upos="X",
+                        xpos="UNK",
+                        ner="O",
+                    )
                 )
-            )
-            cursor = end
+                cursor = end
+        else:
+            cursor = sp.start
+            for idx, t in enumerate(llm_toks):
+                tt = t["text"]
+                start = cursor
+                end = cursor + len(tt)
+                tokens.append(
+                    Token(
+                        span_id=sp.span_id,
+                        index_in_span=idx,
+                        start=start,
+                        end=end,
+                        text=tt,
+                        upos=t["upos"],
+                        xpos=t["xpos"],
+                        ner=t["ner"],
+                    )
+                )
+                cursor = end
 
     meta["invalid_spans"] = invalid_spans
     meta["warnings"] = response.get("warnings", [])

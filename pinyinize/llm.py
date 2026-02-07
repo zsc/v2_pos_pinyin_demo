@@ -99,11 +99,25 @@ class OllamaLLMAdapter:
         system = (
             "You are a Chinese NLP tagger.\n"
             "Task: segment each span text into tokens and tag each token with:\n"
-            "- upos: UDv2 UPOS tag\n"
-            "- xpos: CTB tag (string)\n"
-            "- ner: CoNLL NER tag (O/PER/LOC/ORG/MISC)\n"
-            "You MUST output STRICT JSON only. No extra text.\n"
-            "For each span: concatenation of token.text MUST equal the original span.text exactly."
+            "- upos: UDv2 UPOS tag (ADJ, ADP, ADV, AUX, CCONJ, DET, INTJ, NOUN, NUM, PART, PRON, PROPN, PUNCT, SCONJ, SYM, VERB, X)\n"
+            "- xpos: CTB tag (string, e.g., NN, VV, AD, etc.)\n"
+            "- ner: CoNLL NER tag (O, PER, LOC, ORG, MISC)\n\n"
+            "Output format:\n"
+            '{\n'
+            '  "spans": [\n'
+            '    {\n'
+            '      "span_id": "S0",\n'
+            '      "tokens": [\n'
+            '        {"text": "token1", "upos": "VERB", "xpos": "VV", "ner": "O"},\n'
+            '        {"text": "token2", "upos": "NOUN", "xpos": "NN", "ner": "O"}\n'
+            '      ]\n'
+            '    }\n'
+            '  ]\n'
+            '}\n\n'
+            "Rules:\n"
+            "1. You MUST output STRICT JSON only. No extra text.\n"
+            "2. For each span: concatenation of token.text MUST equal the original span.text exactly.\n"
+            "3. Each token must have text, upos, xpos, and ner fields."
         )
         return self._complete_json(system=system, payload=payload)
 
