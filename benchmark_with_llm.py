@@ -6,6 +6,7 @@ import json
 import re
 import sys
 from pathlib import Path
+from collections import Counter
 from pinyinize.core import PinyinizeOptions, pinyinize
 from pinyinize.resources import PinyinResources
 from pinyinize.llm import OllamaLLMAdapter
@@ -101,6 +102,7 @@ def main(argv: list[str] | None = None) -> int:
         "incorrect": 0,
         "good_cases": [],
         "bad_cases": [],
+        "offending_counter": Counter(),
     }
 
     print("\n" + "=" * 70)
@@ -150,10 +152,11 @@ def main(argv: list[str] | None = None) -> int:
                 first_seg_s = f" ({first_seg})" if first_seg else ""
                 
                 # Identify offending characters
-                offending = identify_offending_chars(text, expected, first_norm, act_norms[0][0] if act_norms else None)
-                offending_str = f" | Offending: {offending}" if offending else ""
+                offending_chars, offending_str = identify_offending_chars(text, expected, first_norm, act_norms[0][0] if act_norms else None)
+                results["offending_counter"].update(offending_chars)
+                offending_display = f" | Offending: {offending_str}" if offending_str else ""
                 
-                status = "✗ FAIL: " + exp_norm + "\n" + (first_norm + first_seg_s) + offending_str
+                status = "✗ FAIL: " + exp_norm + "\n" + (first_norm + first_seg_s) + offending_display
                 if len(results["bad_cases"]) < 10:
                     act_norm = first_norm
                     diff_pos = 0
@@ -168,7 +171,7 @@ def main(argv: list[str] | None = None) -> int:
                             "expected": exp_norm[:50],
                             "actual": act_norm[:50],
                             "diff_at": diff_pos,
-                            "offending": offending,
+                            "offending": offending_str,
                         }
                     )
 
@@ -205,6 +208,14 @@ def main(argv: list[str] | None = None) -> int:
             print(f"    Actual:   {case['actual']}")
             if case.get("offending"):
                 print(f"    Offending: {case['offending']}")
+
+    # Offending character statistics
+    if results["offending_counter"]:
+        print("\n" + "=" * 70)
+        print("OFFENDING CHARACTER STATISTICS (sorted by count)")
+        print("=" * 70)
+        for char, count in results["offending_counter"].most_common():
+            print(f"  {char}: {count}")
 
     print("\n" + "=" * 70)
     print("NOTES")
@@ -310,7 +321,7 @@ def normalize_actual(actual: str) -> str:
     return s.replace('v', 'ü').replace('ɡ', 'g')
 
 
-def identify_offending_chars(text: str, expected_pinyin: str, actual_norm: str, segmenter: str | None) -> str:
+def identify_offending_chars(text: str, expected_pinyin: str, actual_norm: str, segmenter: str | None) -> tuple[list[str], str]:
     """Identify which Chinese characters have mismatched pinyin.
     
     Args:
@@ -320,7 +331,7 @@ def identify_offending_chars(text: str, expected_pinyin: str, actual_norm: str, 
         segmenter: Segmenter name (unused, kept for compatibility)
     
     Returns:
-        String showing offending characters and their pinyin differences
+        Tuple of (list of offending chars, display string showing differences)
     """
     # Clean expected pinyin and split into syllables
     exp_clean = re.sub(r'[，。、；：？！""''（）【】《》]', ' ', expected_pinyin)
@@ -348,7 +359,7 @@ def identify_offending_chars(text: str, expected_pinyin: str, actual_norm: str, 
         if len(exp_norm) != len(actual_norm):
             diff_pos = min(len(exp_norm), len(actual_norm))
         else:
-            return ""
+            return [], ""
     
     # Map diff_pos back to syllable index
     cum_len = 0
@@ -364,6 +375,7 @@ def identify_offending_chars(text: str, expected_pinyin: str, actual_norm: str, 
         offending_idx = len(exp_marked_syllables) - 1
     
     # Collect mismatches starting from offending_idx
+    offending_chars = []
     mismatches = []
     for i in range(offending_idx, min(len(han_chars), len(exp_marked_syllables))):
         exp_syl = exp_marked_syllables[i]
@@ -374,12 +386,13 @@ def identify_offending_chars(text: str, expected_pinyin: str, actual_norm: str, 
         
         if exp_syl != act_syl:
             char = han_chars[i] if i < len(han_chars) else "?"
+            offending_chars.append(char)
             mismatches.append(f"{char}({exp_syl}≠{act_syl})")
         
         if len(mismatches) >= 3:
             break
     
-    return ", ".join(mismatches) if mismatches else ""
+    return offending_chars, ", ".join(mismatches) if mismatches else ""
 
 
 def filter_text_and_pinyin(text: str, pinyin: str, chars_to_ignore: set[str]) -> tuple[str, str]:
