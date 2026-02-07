@@ -294,83 +294,13 @@ LLM 分词 + POS+NER
   * **可解释性**（记录 rule_id、匹配上下文、动作）
   * **冲突检测**（多个规则给同一字不同读音）
 
-### 6.3 Rule 数据结构（base_rules.json 与 overrides.json 共用）
-
-```json
-{
-  "schema_version": 1,
-  "rules": [
-    {
-      "id": "xing_vs_hang_in_bank",
-      "priority": 1000,
-      "description": "‘银行’中的‘行’读 háng",
-      "match": {
-        "self": { "text": "银行" }
-      },
-      "target": {
-        "char": "行",
-        "occurrence": 1
-      },
-      "choose": "háng"
-    }
-  ]
-}
-```
-
-#### 字段说明
-
-* `id`: 全局唯一字符串（建议可读、可追溯）。
-* `priority`: 整数，越大越优先；`overrides.json` 默认应高于基础规则。
-* `match`: 匹配条件（见 6.3）。
-* `target`:
-
-  * `char`: 需要消歧的汉字
-  * `occurrence`: 在 token `text` 中第几次出现（1-based）；可选 `"all"`
-* `choose`: 选定读音（tone marks；如 `háng`；轻声用不带音标的形式，如 `de`）。
-* （可选）`confidence`: 0~1，用于 double check 阈值；未提供默认 0.8。
-
-### 6.4 Match 语法（可扩展但先做最小可用集）
-
-`match` 支持以下 key（全部为 AND 关系；内部数组默认为 OR）：
-
-```json
-"match": {
-  "self": {
-    "text": "行长",
-    "text_in": ["行长", "校长"],
-    "regex": ".*行长.*",
-    "upos_in": ["NOUN", "PROPN"],
-    "xpos_in": ["NN", "NR"],
-    "ner_in": ["O", "LOC"],
-    "contains": ["行"]
-  },
-  "prev": {
-    "text_in": ["银行", "本行"],
-    "upos_in": ["NOUN"],
-    "ner_in": ["O"]
-  },
-  "next": {
-    "upos_in": ["NOUN", "VERB"],
-    "ner_in": ["O", "PER"]
-  }
-}
-```
-
-约定：
-
-* `self` 指当前 token（包含 target char 的 token）。
-* `prev/next` 是相邻 token；不存在时视为不匹配（或允许配置 `allow_missing`，默认不允许）。
-* `text` 是精确匹配；`text_in` 为列表；`regex` 是正则字符串（实现语言自行选择正则引擎）。
-* `upos_in/xpos_in/ner_in` 支持集合匹配。
-* `contains`：token text 包含某些字（用于弱词典场景）。
-
 ---
 
 ## 7. 规则执行语义（Grammar Reduction）
 
 ### 7.1 执行顺序与冲突
 
-1. 加载规则集：`overrides.json`（最高优先） + `base_rules.json`。
+1. 加载规则集：`overrides.json`（最高优先）
 2. 按 `priority DESC, id ASC` 排序。
 3. 扫描 token 流：
 
