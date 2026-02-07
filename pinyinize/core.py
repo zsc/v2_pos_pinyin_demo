@@ -456,6 +456,9 @@ def _apply_overrides(
                         return
                     if dec.chosen == choose:
                         dec.notes.append(f"override_reaffirm:{rid}")
+                        # Still mark as override to prevent lower-priority rules from changing it
+                        dec.resolved_by = "override"
+                        dec.rule_id = rid
                         return
                     if dec.resolved_by == "override" and dec.rule_id and dec.rule_id != rid:
                         dec.conflict = True

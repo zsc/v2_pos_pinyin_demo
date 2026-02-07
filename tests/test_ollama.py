@@ -171,8 +171,7 @@ class TestOllamaLLMAdapter(unittest.TestCase):
     @patch("pinyinize.llm._http_post_json")
     def test_http_error_handling(self, mock_post: MagicMock) -> None:
         """Test handling of HTTP errors."""
-        from urllib.error import URLError
-        mock_post.side_effect = URLError("Connection refused")
+        mock_post.side_effect = LLMError("ollama_http_error:Connection refused")
 
         adapter = OllamaLLMAdapter(model="test-model")
         payload = {"spans": []}
@@ -381,7 +380,7 @@ class TestLiveOllama(unittest.TestCase):
     def _create_minimal_data(self, root: Path) -> None:
         """Create minimal test data."""
         root.joinpath("word.json").write_text(
-            "[]\n",
+            "",
             encoding="utf-8",
         )
         root.joinpath("char_base.json").write_text(
