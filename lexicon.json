@@ -1,11 +1,7 @@
 {
   "schema_version": 1,
   "items": [
-    { "word": "得去", "pinyin": "děi qù" },
-    { "word": "行长", "pinyin": "háng zhǎng" },
-    { "word": "搬起", "pinyin": "bān qǐ" },
-    { "word": "石头", "pinyin": "shí tou" },
-    { "word": "砸脚", "pinyin": "zá jiǎo" }
+    { "word": "行长", "pinyin": "háng zhǎng" }
   ]
 }
 
