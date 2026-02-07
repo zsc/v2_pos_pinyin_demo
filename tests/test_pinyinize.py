@@ -1,3 +1,5 @@
+"""Main test suite for pinyinize - combines all acceptance criteria tests."""
+
 import json
 import tempfile
 import unittest
@@ -8,6 +10,8 @@ from pinyinize.resources import PinyinResources
 
 
 class TestPinyinize(unittest.TestCase):
+    """Original acceptance criteria tests."""
+
     def _write_min_data(self, root: Path) -> None:
         word_items = [
             {"word": "细说", "pinyin": "xì shuō"},
@@ -70,21 +74,29 @@ class TestPinyinize(unittest.TestCase):
         )
 
     def test_acceptance_cases(self) -> None:
+        """Test all acceptance criteria from CLAUDE.md section 15."""
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             self._write_min_data(root)
             resources = PinyinResources.load_from_dir(root)
             opts = PinyinizeOptions(resources=resources)
 
+            # Criterion 1: 基础
             self.assertEqual(pinyinize("细说", opts).output_text, "xìshuō")
+
+            # Criterion 2: 行/长/重
             self.assertEqual(
                 pinyinize("银行行长重新营业", opts).output_text,
                 "yínháng hángzhǎng chóngxīn yíngyè",
             )
+
+            # Criterion 3: 得
             self.assertEqual(
                 pinyinize("他得去得到答案", opts).output_text,
                 "tā děiqù dédào dáàn",
             )
+
+            # Criterion 4: 混排
             self.assertEqual(
                 pinyinize("细说OpenAI的API v2.0：https://openai.com", opts).output_text,
                 "xìshuō OpenAI de API v2.0：https://openai.com",
