@@ -30,7 +30,7 @@ raw input string
   -> Build token stream with global offsets
   -> Word lookup: 优先匹配 word.json（词级固定拼音词典）
   -> Char base lookup: 未命中词表的字符使用 char_base.json（字基础读音）
-  -> Polyphone detection: 结合 polyphones.json 识别多音字
+  -> Polyphone detection: 结合 polyphone.json 识别多音字
   -> POS+NER disambiguation: 多音字使用 polyphone_disambig.json 进行 pos+ner-aware 消歧
   -> Rule Engine (overrides.json): 应用用户自定义覆盖规则
   -> LLM double check: 对低置信或冲突处进行复核，输出需要人工确认项
@@ -231,7 +231,7 @@ Token("银行")
 * 单音字：直接返回读音
 * 多音字（值为 null）：标记为待消歧，进入 polyphone_disambig.json 处理
 
-### 5.4 polyphones.json（多音字候选表）
+### 5.4 polyphone.json（多音字候选表）
 
 仅用于识别哪些字是多音字，以及有哪些候选读音。
 
@@ -636,7 +636,7 @@ yínhánghángzhǎngchóngxīnyíngyè，OpenAI API v2.0：https://openai.com
 数据文件：
 * `word.json`：词级固定拼音词典（优先匹配，覆盖常见多音词）
 * `char_base.json`：字基础读音表（单音字直接返回，多音字标记为 null）
-* `polyphones.json`：多音字候选表（记录哪些字是多音字及其候选读音）
+* `polyphone.json`：多音字候选表（记录哪些字是多音字及其候选读音）
 * `polyphone_disambig.json`：POS+NER 消歧表（核心消歧数据，按 pos|ner 组合给出最佳读音）
 * `overrides.json`：用户覆盖规则（可不存在；程序运行时自动创建空模板）
 
