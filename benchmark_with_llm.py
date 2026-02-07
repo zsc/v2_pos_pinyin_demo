@@ -40,11 +40,17 @@ def main(argv: list[str] | None = None) -> int:
         help="Confidence threshold for LLM double-check trigger.",
     )
     parser.add_argument("--no-lexicon", action="store_true", help="Ignore lexicon.json (use word.json only).")
+    parser.add_argument(
+        "--ignore-chars",
+        default="",
+        help="Ignore mismatches caused by these characters (e.g., '的一了').",
+    )
     args = parser.parse_args(argv)
 
     dataset_path = Path(args.dataset)
     max_cases = int(args.max_cases)
     data_dir = Path(args.data_dir)
+    ignore_chars = set(args.ignore_chars)
 
     segmenters = args.segmenter or ["ollama"]
     use_ollama = "ollama" in segmenters
@@ -107,6 +113,10 @@ def main(argv: list[str] | None = None) -> int:
         text = item["text"]
         expected = item["pinyin"]
         item_id = item["id"]
+
+        # Filter out ignored characters before any pinyin processing
+        if ignore_chars:
+            text, expected = filter_text_and_pinyin(text, expected, ignore_chars)
 
         print(f"[{idx}/{max_cases}] Testing {item_id}...", end=" ", flush=True)
 
@@ -290,6 +300,53 @@ def normalize_actual(actual: str) -> str:
     s = re.sub(r'[，。、；：？！""''（）【】《》]', '', actual)
     s = re.sub(r'\s+', '', s)
     return s.replace('v', 'ü').replace('ɡ', 'g')
+
+
+def filter_text_and_pinyin(text: str, pinyin: str, chars_to_ignore: set[str]) -> tuple[str, str]:
+    """Filter out specified characters from text and remove corresponding pinyin syllables.
+    
+    The text and pinyin are aligned: each Han character in text corresponds to one
+    syllable in pinyin (space-separated). Non-Han characters (punctuation, etc.)
+    don't consume syllables.
+    
+    Args:
+        text: Original Chinese text (may contain punctuation)
+        pinyin: Space-separated pinyin with tone numbers (may contain attached punctuation)
+        chars_to_ignore: Set of characters to filter out
+    
+    Returns:
+        Tuple of (filtered_text, filtered_pinyin)
+    """
+    if not chars_to_ignore:
+        return text, pinyin
+    
+    # First, convert punctuation in pinyin to spaces for proper splitting
+    pinyin_clean = re.sub(r'[，。、；：？！""''（）【】《》]', ' ', pinyin)
+    pinyin_clean = re.sub(r'[\s,;.!?"\'()[\]{}]+', ' ', pinyin_clean)
+    # Split pinyin into syllables
+    syllables = [s for s in pinyin_clean.split() if s]
+    
+    # Build filtered text and corresponding syllables
+    filtered_chars = []
+    filtered_syllables = []
+    syllable_idx = 0
+    
+    for ch in text:
+        is_han = '\u4e00' <= ch <= '\u9fff'
+        if is_han:
+            if ch not in chars_to_ignore:
+                filtered_chars.append(ch)
+                if syllable_idx < len(syllables):
+                    filtered_syllables.append(syllables[syllable_idx])
+            syllable_idx += 1
+        else:
+            # Non-Han characters (punctuation) are kept as-is
+            filtered_chars.append(ch)
+    
+    filtered_text = ''.join(filtered_chars)
+    filtered_pinyin = ' '.join(filtered_syllables)
+    
+    return filtered_text, filtered_pinyin
 
 
 if __name__ == "__main__":
