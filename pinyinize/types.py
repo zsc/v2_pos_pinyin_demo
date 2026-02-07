@@ -15,6 +15,8 @@ ProtectedKind = Literal[
     "other",
 ]
 
+SegmenterName = Literal["greedy", "ollama", "jieba"]
+
 
 @dataclass(frozen=True)
 class Span:

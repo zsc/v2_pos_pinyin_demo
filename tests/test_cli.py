@@ -106,9 +106,11 @@ class TestCLI(unittest.TestCase):
                 self.assertTrue(report_path.exists())
 
                 report = json.loads(report_path.read_text(encoding="utf-8"))
-                self.assertEqual(report["schema_version"], 1)
-                self.assertIn("text", report)
-                self.assertIn("tokens", report)
+                self.assertIsInstance(report, list)
+                self.assertTrue(len(report) >= 1)
+                self.assertEqual(report[0]["schema_version"], 1)
+                self.assertIn("text", report[0])
+                self.assertIn("tokens", report[0])
 
     def test_no_word_like_spacing(self) -> None:
         """Test --no-word-like-spacing option."""

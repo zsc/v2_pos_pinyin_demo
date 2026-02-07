@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """Benchmark pinyinize with Ollama LLM against Chinese-TTS-Dataset."""
 
 import json
@@ -146,18 +146,24 @@ for idx, item in enumerate(data[:MAX_CASES], 1):
     print(f"[{idx}/{MAX_CASES}] Testing {item_id}...", end=' ', flush=True)
     
     try:
-        result = pinyinize(text, opts)
-        actual = result.output_text
+        pinyin_results = pinyinize(text, opts)
+        candidates = pinyin_results or []
+        actual_by_segmenter = [(r.segmenter, r.output_text) for r in candidates]
         
         exp_norm = normalize_expected(expected)
-        act_norm = normalize_actual(actual)
-        is_correct = exp_norm == act_norm
+        act_norms = [(seg, normalize_actual(out)) for (seg, out) in actual_by_segmenter]
+        matched_seg = None
+        for seg, norm in act_norms:
+            if exp_norm == norm:
+                matched_seg = seg
+                break
+        is_correct = matched_seg is not None
         
         results['total'] += 1
         
         if is_correct:
             results['correct'] += 1
-            status = "✓ PASS"
+            status = f"✓ PASS ({matched_seg})" if matched_seg else "✓ PASS"
             if len(results['good_cases']) < 5:
                 results['good_cases'].append({
                     'id': item_id,
@@ -165,8 +171,11 @@ for idx, item in enumerate(data[:MAX_CASES], 1):
                 })
         else:
             results['incorrect'] += 1
-            status = "✗ FAIL: " + exp_norm + '\n' + act_norm
+            first_seg, first_norm = act_norms[0] if act_norms else (None, "")
+            first_seg_s = f" ({first_seg})" if first_seg else ""
+            status = "✗ FAIL: " + exp_norm + '\n' + (first_norm + first_seg_s)
             if len(results['bad_cases']) < 10:
+                act_norm = first_norm
                 # Find first diff position
                 diff_pos = 0
                 for i, (e, a) in enumerate(zip(exp_norm, act_norm)):

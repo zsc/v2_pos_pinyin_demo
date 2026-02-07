@@ -271,9 +271,9 @@ class TestOllamaWithPinyinize(unittest.TestCase):
                 resources=resources,
                 llm_adapter=mock_adapter,
             )
-            result = pinyinize("银行行长", opts)
+            results = pinyinize("银行行长", opts)
 
-            self.assertEqual(result.output_text, "yínháng hángzhǎng")
+            self.assertTrue(any(r.output_text == "yínháng hángzhǎng" for r in results))
             mock_adapter.segment_and_tag.assert_called_once()
 
     def test_pinyinize_llm_fallback_on_invalid_response(self) -> None:
@@ -293,7 +293,8 @@ class TestOllamaWithPinyinize(unittest.TestCase):
                 resources=resources,
                 llm_adapter=mock_adapter,
             )
-            result = pinyinize("银行行长", opts)
+            results = pinyinize("银行行长", opts)
+            result = results[0]
 
             # Should still produce output using fallback
             self.assertIn("yín", result.output_text)
@@ -347,7 +348,7 @@ class TestOllamaWithPinyinize(unittest.TestCase):
                 double_check_adapter=mock_adapter,
                 double_check_threshold=0.9,
             )
-            result = pinyinize("行", opts)
+            pinyinize("行", opts)
 
             # Double check should be called because 行 is a polyphone with low confidence
             mock_adapter.double_check.assert_called_once()
@@ -360,7 +361,8 @@ class TestOllamaWithPinyinize(unittest.TestCase):
             resources = PinyinResources.load_from_dir(root)
 
             opts = PinyinizeOptions(resources=resources, llm_adapter=None)
-            result = pinyinize("银行行长", opts)
+            results = pinyinize("银行行长", opts)
+            result = results[0]
 
             self.assertEqual(result.output_text, "yínháng hángzhǎng")
             self.assertFalse(result.report["llm_segment_and_tag"]["used"])
@@ -491,10 +493,9 @@ class TestLiveOllama(unittest.TestCase):
             )
 
             try:
-                result = pinyinize("测试", opts)
-                # Should produce pinyin output
-                self.assertTrue(result.output_text)
-                self.assertTrue(result.report["llm_segment_and_tag"]["used"])
+                results = pinyinize("测试", opts)
+                self.assertTrue(any(r.output_text for r in results))
+                self.assertTrue(any(r.report["llm_segment_and_tag"]["used"] for r in results))
             except Exception as e:
                 self.skipTest(f"Ollama server not available: {e}")
 

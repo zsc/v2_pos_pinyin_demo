@@ -204,8 +204,8 @@ class TestAcceptanceCriteria(unittest.TestCase):
             resources = PinyinResources.load_from_dir(root)
             opts = PinyinizeOptions(resources=resources)
 
-            result = pinyinize("细说", opts)
-            self.assertEqual(result.output_text, "xìshuō")
+            results = pinyinize("细说", opts)
+            self.assertTrue(any(r.output_text == "xìshuō" for r in results))
 
     def test_criterion_2_bank_director(self) -> None:
         """Test criterion 2: 银行行长重新营业 -> yínháng hángzhǎng chóngxīn yíngyè."""
@@ -215,8 +215,8 @@ class TestAcceptanceCriteria(unittest.TestCase):
             resources = PinyinResources.load_from_dir(root)
             opts = PinyinizeOptions(resources=resources)
 
-            result = pinyinize("银行行长重新营业", opts)
-            self.assertEqual(result.output_text, "yínháng hángzhǎng chóngxīn yíngyè")
+            results = pinyinize("银行行长重新营业", opts)
+            self.assertTrue(any(r.output_text == "yínháng hángzhǎng chóngxīn yíngyè" for r in results))
 
     def test_criterion_3_de_polyphone(self) -> None:
         """Test criterion 3: 他得去得到答案 -> tā děiqù dédào dáàn."""
@@ -226,8 +226,8 @@ class TestAcceptanceCriteria(unittest.TestCase):
             resources = PinyinResources.load_from_dir(root)
             opts = PinyinizeOptions(resources=resources)
 
-            result = pinyinize("他得去得到答案", opts)
-            self.assertEqual(result.output_text, "tā děiqù dédào dáàn")
+            results = pinyinize("他得去得到答案", opts)
+            self.assertTrue(any(r.output_text == "tā děiqù dédào dáàn" for r in results))
 
     def test_criterion_4_mixed_content(self) -> None:
         """Test criterion 4: Mixed content preservation."""
@@ -237,13 +237,10 @@ class TestAcceptanceCriteria(unittest.TestCase):
             resources = PinyinResources.load_from_dir(root)
             opts = PinyinizeOptions(resources=resources)
 
-            result = pinyinize("细说OpenAI的API v2.0：https://openai.com", opts)
-            # URL should be preserved exactly
-            self.assertIn("https://openai.com", result.output_text)
-            # English should be preserved
-            self.assertIn("OpenAI", result.output_text)
-            # Version number should be preserved
-            self.assertIn("v2.0", result.output_text)
+            results = pinyinize("细说OpenAI的API v2.0：https://openai.com", opts)
+            self.assertTrue(any("https://openai.com" in r.output_text for r in results))
+            self.assertTrue(any("OpenAI" in r.output_text for r in results))
+            self.assertTrue(any("v2.0" in r.output_text for r in results))
 
     def test_url_character_exact(self) -> None:
         """Test that URL is preserved character-by-character."""
@@ -254,8 +251,8 @@ class TestAcceptanceCriteria(unittest.TestCase):
             opts = PinyinizeOptions(resources=resources)
 
             url = "https://openai.com/api/v2?key=value"
-            result = pinyinize(f"访问{url}即可", opts)
-            self.assertIn(url, result.output_text)
+            results = pinyinize(f"访问{url}即可", opts)
+            self.assertTrue(any(url in r.output_text for r in results))
 
     def test_report_has_decision_sources(self) -> None:
         """Test report tracks decision sources."""
@@ -265,21 +262,19 @@ class TestAcceptanceCriteria(unittest.TestCase):
             resources = PinyinResources.load_from_dir(root)
             opts = PinyinizeOptions(resources=resources)
 
-            result = pinyinize("细说", opts)
-            report = result.report
-
-            # Check that tokens have char_decisions
-            self.assertTrue(len(report["tokens"]) > 0)
-            for token in report["tokens"]:
-                self.assertIn("char_decisions", token)
-                for decision in token["char_decisions"]:
-                    self.assertIn("resolved_by", decision)
-                    # Should be one of the valid sources
-                    valid_sources = [
-                        "word", "char_base", "polyphone_disambig",
-                        "override", "llm_double_check", "user", "fallback", "unknown"
-                    ]
-                    self.assertIn(decision["resolved_by"], valid_sources)
+            results = pinyinize("细说", opts)
+            for result in results:
+                report = result.report
+                self.assertTrue(len(report["tokens"]) > 0)
+                for token in report["tokens"]:
+                    self.assertIn("char_decisions", token)
+                    for decision in token["char_decisions"]:
+                        self.assertIn("resolved_by", decision)
+                        valid_sources = [
+                            "word", "char_base", "polyphone_disambig",
+                            "override", "llm_double_check", "user", "fallback", "unknown"
+                        ]
+                        self.assertIn(decision["resolved_by"], valid_sources)
 
 
 class TestRealWorldScenarios(unittest.TestCase):
@@ -370,8 +365,8 @@ class TestRealWorldScenarios(unittest.TestCase):
             ]
 
             for input_text, expected in test_cases:
-                result = pinyinize(input_text, opts)
-                self.assertEqual(result.output_text, expected, f"Failed for {input_text}")
+                results = pinyinize(input_text, opts)
+                self.assertTrue(any(r.output_text == expected for r in results), f"Failed for {input_text}")
 
     def test_job_titles(self) -> None:
         """Test job title pronunciations."""
@@ -390,8 +385,8 @@ class TestRealWorldScenarios(unittest.TestCase):
             ]
 
             for input_text, expected in test_cases:
-                result = pinyinize(input_text, opts)
-                self.assertEqual(result.output_text, expected, f"Failed for {input_text}")
+                results = pinyinize(input_text, opts)
+                self.assertTrue(any(r.output_text == expected for r in results), f"Failed for {input_text}")
 
 
 class TestEdgeCases(unittest.TestCase):
@@ -430,8 +425,8 @@ class TestEdgeCases(unittest.TestCase):
             resources = PinyinResources.load_from_dir(root)
             opts = PinyinizeOptions(resources=resources)
 
-            result = pinyinize("", opts)
-            self.assertEqual(result.output_text, "")
+            results = pinyinize("", opts)
+            self.assertTrue(any(r.output_text == "" for r in results))
 
     def test_only_spaces(self) -> None:
         """Test input with only spaces."""
@@ -441,8 +436,8 @@ class TestEdgeCases(unittest.TestCase):
             resources = PinyinResources.load_from_dir(root)
             opts = PinyinizeOptions(resources=resources)
 
-            result = pinyinize("   ", opts)
-            self.assertEqual(result.output_text, "   ")
+            results = pinyinize("   ", opts)
+            self.assertTrue(any(r.output_text == "   " for r in results))
 
     def test_only_punctuation(self) -> None:
         """Test input with only punctuation."""
@@ -452,8 +447,8 @@ class TestEdgeCases(unittest.TestCase):
             resources = PinyinResources.load_from_dir(root)
             opts = PinyinizeOptions(resources=resources)
 
-            result = pinyinize("，。！？", opts)
-            self.assertEqual(result.output_text, "，。！？")
+            results = pinyinize("，。！？", opts)
+            self.assertTrue(any(r.output_text == "，。！？" for r in results))
 
     def test_emoji(self) -> None:
         """Test input with emoji."""
@@ -463,9 +458,8 @@ class TestEdgeCases(unittest.TestCase):
             resources = PinyinResources.load_from_dir(root)
             opts = PinyinizeOptions(resources=resources)
 
-            result = pinyinize("测试😀", opts)
-            # Emoji should be preserved
-            self.assertIn("😀", result.output_text)
+            results = pinyinize("测试😀", opts)
+            self.assertTrue(any("😀" in r.output_text for r in results))
 
     def test_numbers_and_chinese(self) -> None:
         """Test numbers mixed with Chinese."""
@@ -475,10 +469,9 @@ class TestEdgeCases(unittest.TestCase):
             resources = PinyinResources.load_from_dir(root)
             opts = PinyinizeOptions(resources=resources)
 
-            result = pinyinize("2024年测试", opts)
-            # Numbers should be preserved
-            self.assertIn("2024", result.output_text)
-            self.assertIn("cè", result.output_text)
+            results = pinyinize("2024年测试", opts)
+            self.assertTrue(any("2024" in r.output_text for r in results))
+            self.assertTrue(any("cè" in r.output_text for r in results))
 
 
 if __name__ == "__main__":

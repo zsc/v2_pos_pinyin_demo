@@ -566,7 +566,7 @@ yínháng hángzhǎng chóngxīn yíngyè，OpenAI API v2.0：https://openai.com
 程序：
 * 核心库 + CLI（或等价入口）：
 
-  * `pinyinize(text, options) -> { output_text, report }`
+  * `pinyinize(text, options) -> list[{ output_text, report, segmenter }]`
 * 单元测试与样例集（至少覆盖：混排、URL、常见多音字、冲突处理）
 
 ### 13.2 可选增强

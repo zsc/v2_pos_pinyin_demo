@@ -69,6 +69,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--data-dir", default=".", help="Directory containing *.json data files.")
     parser.add_argument("--report", default=None, help="Write report JSON to this path.")
     parser.add_argument(
+        "--segmenter",
+        action="append",
+        choices=["greedy", "ollama", "jieba"],
+        help="Segmentation method to run (repeatable). Default: auto.",
+    )
+    parser.add_argument(
         "--no-word-like-spacing",
         action="store_true",
         help="Do not insert spaces around latin/number/url spans.",
@@ -96,14 +102,16 @@ def main(argv: list[str] | None = None) -> int:
 
     opts = PinyinizeOptions(
         resources=resources,
+        segmenters=tuple(args.segmenter) if args.segmenter else None,
         word_like_spacing=not args.no_word_like_spacing,
         llm_adapter=llm_adapter,
         double_check_adapter=double_check_adapter,
         debug=args.debug,
     )
-    res = pinyinize(text, opts)
+    results = pinyinize(text, opts)
+    primary = results[0] if results else None
 
-    if args.interactive and res.report.get("needs_review_items"):
+    if args.interactive and primary and primary.report.get("needs_review_items"):
         overrides_path = data_dir / "overrides.json"
         overrides = _load_overrides(overrides_path)
         rules = overrides.get("rules")
@@ -111,7 +119,7 @@ def main(argv: list[str] | None = None) -> int:
             rules = []
             overrides["rules"] = rules
 
-        for item in res.report["needs_review_items"]:
+        for item in primary.report["needs_review_items"]:
             if not isinstance(item, dict):
                 continue
             token_text = item.get("token_text")
@@ -171,20 +179,26 @@ def main(argv: list[str] | None = None) -> int:
         resources2 = PinyinResources.load_from_dir(data_dir)
         opts2 = PinyinizeOptions(
             resources=resources2,
+            segmenters=tuple(args.segmenter) if args.segmenter else None,
             word_like_spacing=not args.no_word_like_spacing,
             llm_adapter=llm_adapter,
             double_check_adapter=double_check_adapter,
             debug=args.debug,
         )
-        res = pinyinize(text, opts2)
+        results = pinyinize(text, opts2)
 
-    sys.stdout.write(res.output_text)
-    if not res.output_text.endswith("\n"):
-        sys.stdout.write("\n")
+    if len(results) == 1:
+        sys.stdout.write(results[0].output_text)
+        if not results[0].output_text.endswith("\n"):
+            sys.stdout.write("\n")
+    else:
+        for r in results:
+            sys.stdout.write(f"[{r.segmenter}] {r.output_text}\n")
 
     if args.report:
         Path(args.report).write_text(
-            json.dumps(res.report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+            json.dumps([r.report for r in results], ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
         )
     return 0
 

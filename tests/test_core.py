@@ -103,8 +103,8 @@ class TestBasicPinyin(unittest.TestCase):
             resources = PinyinResources.load_from_dir(root)
             opts = PinyinizeOptions(resources=resources)
 
-            result = pinyinize("细说", opts)
-            self.assertEqual(result.output_text, "xìshuō")
+            results = pinyinize("细说", opts)
+            self.assertTrue(any(r.output_text == "xìshuō" for r in results))
 
     def test_multi_word_sentence(self) -> None:
         """Test sentence with multiple words."""
@@ -114,8 +114,8 @@ class TestBasicPinyin(unittest.TestCase):
             resources = PinyinResources.load_from_dir(root)
             opts = PinyinizeOptions(resources=resources)
 
-            result = pinyinize("银行行长重新营业", opts)
-            self.assertEqual(result.output_text, "yínháng hángzhǎng chóngxīn yíngyè")
+            results = pinyinize("银行行长重新营业", opts)
+            self.assertTrue(any(r.output_text == "yínháng hángzhǎng chóngxīn yíngyè" for r in results))
 
     def test_de_polyphone(self) -> None:
         """Test '得' character variations."""
@@ -125,8 +125,8 @@ class TestBasicPinyin(unittest.TestCase):
             resources = PinyinResources.load_from_dir(root)
             opts = PinyinizeOptions(resources=resources)
 
-            result = pinyinize("他得去得到答案", opts)
-            self.assertEqual(result.output_text, "tā děiqù dédào dáàn")
+            results = pinyinize("他得去得到答案", opts)
+            self.assertTrue(any(r.output_text == "tā děiqù dédào dáàn" for r in results))
 
     def test_char_base_fallback(self) -> None:
         """Test falling back to char_base when word not in dictionary."""
@@ -137,11 +137,8 @@ class TestBasicPinyin(unittest.TestCase):
             opts = PinyinizeOptions(resources=resources)
 
             # "你我他" - not in word.json, should use char_base
-            result = pinyinize("你我他", opts)
-            # Should be "nǐ wǒ tā" (spaced by token boundaries)
-            self.assertIn("nǐ", result.output_text)
-            self.assertIn("wǒ", result.output_text)
-            self.assertIn("tā", result.output_text)
+            results = pinyinize("你我他", opts)
+            self.assertTrue(any(all(x in r.output_text for x in ["nǐ", "wǒ", "tā"]) for r in results))
 
 
 class TestMixedContent(unittest.TestCase):
@@ -185,8 +182,8 @@ class TestMixedContent(unittest.TestCase):
             resources = PinyinResources.load_from_dir(root)
             opts = PinyinizeOptions(resources=resources)
 
-            result = pinyinize("细说OpenAI的API", opts)
-            self.assertEqual(result.output_text, "xìshuō OpenAI de API")
+            results = pinyinize("细说OpenAI的API", opts)
+            self.assertTrue(any(r.output_text == "xìshuō OpenAI de API" for r in results))
 
     def test_chinese_with_numbers(self) -> None:
         """Test Chinese mixed with numbers."""
@@ -196,8 +193,8 @@ class TestMixedContent(unittest.TestCase):
             resources = PinyinResources.load_from_dir(root)
             opts = PinyinizeOptions(resources=resources)
 
-            result = pinyinize("版本2.0发布", opts)
-            self.assertIn("2.0", result.output_text)
+            results = pinyinize("版本2.0发布", opts)
+            self.assertTrue(any("2.0" in r.output_text for r in results))
 
     def test_url_preservation(self) -> None:
         """Test URL preservation."""
@@ -207,8 +204,8 @@ class TestMixedContent(unittest.TestCase):
             resources = PinyinResources.load_from_dir(root)
             opts = PinyinizeOptions(resources=resources)
 
-            result = pinyinize("访问https://example.com", opts)
-            self.assertIn("https://example.com", result.output_text)
+            results = pinyinize("访问https://example.com", opts)
+            self.assertTrue(any("https://example.com" in r.output_text for r in results))
 
     def test_punctuation_preserved(self) -> None:
         """Test punctuation is preserved."""
@@ -218,9 +215,8 @@ class TestMixedContent(unittest.TestCase):
             resources = PinyinResources.load_from_dir(root)
             opts = PinyinizeOptions(resources=resources)
 
-            result = pinyinize("细说，测试。", opts)
-            self.assertIn("，", result.output_text)
-            self.assertIn("。", result.output_text)
+            results = pinyinize("细说，测试。", opts)
+            self.assertTrue(any(all(x in r.output_text for x in ["，", "。"]) for r in results))
 
 
 class TestPolyphoneDisambiguation(unittest.TestCase):
@@ -292,9 +288,8 @@ class TestPolyphoneDisambiguation(unittest.TestCase):
 
             # "中国" - "中" as NOUN should use "zhōng"
             # But without LLM, it uses fallback "zhōng" (default)
-            result = pinyinize("中国", opts)
-            # With fallback, should use default
-            self.assertIn("zhōng", result.output_text)
+            results = pinyinize("中国", opts)
+            self.assertTrue(any("zhōng" in r.output_text for r in results))
 
 
 class TestOverrideRules(unittest.TestCase):
@@ -356,10 +351,8 @@ class TestOverrideRules(unittest.TestCase):
             resources = PinyinResources.load_from_dir(root)
             opts = PinyinizeOptions(resources=resources)
 
-            result = pinyinize("行行好", opts)
-            # Should apply override rules
-            self.assertIn("xíng", result.output_text)
-            self.assertIn("háng", result.output_text)
+            results = pinyinize("行行好", opts)
+            self.assertTrue(any(all(x in r.output_text for x in ["xíng", "háng"]) for r in results))
 
     def test_override_priority(self) -> None:
         """Test that higher priority rules take precedence."""
@@ -387,9 +380,8 @@ class TestOverrideRules(unittest.TestCase):
             resources = PinyinResources.load_from_dir(root)
             opts = PinyinizeOptions(resources=resources)
 
-            result = pinyinize("行", opts)
-            # High priority rule should win
-            self.assertIn("xíng", result.output_text)
+            results = pinyinize("行", opts)
+            self.assertTrue(any("xíng" in r.output_text for r in results))
 
 
 class TestReportStructure(unittest.TestCase):
@@ -431,20 +423,20 @@ class TestReportStructure(unittest.TestCase):
             resources = PinyinResources.load_from_dir(root)
             opts = PinyinizeOptions(resources=resources)
 
-            result = pinyinize("测试", opts)
-            report = result.report
+            results = pinyinize("测试", opts)
 
-            # Check required fields
-            self.assertEqual(report["schema_version"], 1)
-            self.assertIn("text", report)
-            self.assertIn("spans", report)
-            self.assertIn("tokens", report)
-            self.assertIn("llm_segment_and_tag", report)
-            self.assertIn("llm_double_check", report)
-            self.assertIn("needs_review_items", report)
-            self.assertIn("applied_overrides", report)
-            self.assertIn("conflicts", report)
-            self.assertIn("warnings", report)
+            for result in results:
+                report = result.report
+                self.assertEqual(report["schema_version"], 1)
+                self.assertIn("text", report)
+                self.assertIn("spans", report)
+                self.assertIn("tokens", report)
+                self.assertIn("llm_segment_and_tag", report)
+                self.assertIn("llm_double_check", report)
+                self.assertIn("needs_review_items", report)
+                self.assertIn("applied_overrides", report)
+                self.assertIn("conflicts", report)
+                self.assertIn("warnings", report)
 
     def test_spans_structure(self) -> None:
         """Test that spans have correct structure."""
@@ -454,16 +446,16 @@ class TestReportStructure(unittest.TestCase):
             resources = PinyinResources.load_from_dir(root)
             opts = PinyinizeOptions(resources=resources)
 
-            result = pinyinize("测试", opts)
-            spans = result.report["spans"]
-
-            self.assertIsInstance(spans, list)
-            for span in spans:
-                self.assertIn("span_id", span)
-                self.assertIn("type", span)
-                self.assertIn("start", span)
-                self.assertIn("end", span)
-                self.assertIn("text", span)
+            results = pinyinize("测试", opts)
+            for result in results:
+                spans = result.report["spans"]
+                self.assertIsInstance(spans, list)
+                for span in spans:
+                    self.assertIn("span_id", span)
+                    self.assertIn("type", span)
+                    self.assertIn("start", span)
+                    self.assertIn("end", span)
+                    self.assertIn("text", span)
 
     def test_tokens_structure(self) -> None:
         """Test that tokens have correct structure."""
@@ -473,18 +465,18 @@ class TestReportStructure(unittest.TestCase):
             resources = PinyinResources.load_from_dir(root)
             opts = PinyinizeOptions(resources=resources)
 
-            result = pinyinize("测试", opts)
-            tokens = result.report["tokens"]
-
-            self.assertIsInstance(tokens, list)
-            for tok in tokens:
-                self.assertIn("span_id", tok)
-                self.assertIn("text", tok)
-                self.assertIn("upos", tok)
-                self.assertIn("xpos", tok)
-                self.assertIn("ner", tok)
-                self.assertIn("pinyin", tok)
-                self.assertIn("char_decisions", tok)
+            results = pinyinize("测试", opts)
+            for result in results:
+                tokens = result.report["tokens"]
+                self.assertIsInstance(tokens, list)
+                for tok in tokens:
+                    self.assertIn("span_id", tok)
+                    self.assertIn("text", tok)
+                    self.assertIn("upos", tok)
+                    self.assertIn("xpos", tok)
+                    self.assertIn("ner", tok)
+                    self.assertIn("pinyin", tok)
+                    self.assertIn("char_decisions", tok)
 
 
 class TestWordLikeSpacing(unittest.TestCase):
@@ -526,9 +518,8 @@ class TestWordLikeSpacing(unittest.TestCase):
             resources = PinyinResources.load_from_dir(root)
             opts = PinyinizeOptions(resources=resources, word_like_spacing=True)
 
-            result = pinyinize("中文test", opts)
-            # Should have space between pinyin and Latin
-            self.assertIn("wén test", result.output_text)  # Space between wén and test
+            results = pinyinize("中文test", opts)
+            self.assertTrue(any("wén test" in r.output_text for r in results))
 
     def test_spacing_disabled(self) -> None:
         """Test no spacing when disabled."""
@@ -538,9 +529,8 @@ class TestWordLikeSpacing(unittest.TestCase):
             resources = PinyinResources.load_from_dir(root)
             opts = PinyinizeOptions(resources=resources, word_like_spacing=False)
 
-            result = pinyinize("中文test", opts)
-            # When spacing is disabled, Chinese pinyin and Latin should be concatenated
-            self.assertIn("wéntest", result.output_text)  # No space between wén and test
+            results = pinyinize("中文test", opts)
+            self.assertTrue(any("wéntest" in r.output_text for r in results))
 
 
 if __name__ == "__main__":

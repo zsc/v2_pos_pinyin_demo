@@ -7,7 +7,7 @@ from typing import Any, Literal
 from .preprocess import split_spans
 from .resources import PinyinResources
 from .rules import AppliedRule, rule_matches, sort_rules
-from .types import CharDecision, Rule, Span, Token
+from .types import CharDecision, Rule, SegmenterName, Span, Token
 from .util import is_word_like_protected_kind, normalize_pinyin, normalize_word_pinyin
 
 
@@ -33,10 +33,47 @@ _ALLOWED_UPOS = {
 
 _ALLOWED_NER = {"O", "PER", "LOC", "ORG", "MISC"}
 
+def _jieba_flag_to_upos(flag: str) -> str:
+    if not flag:
+        return "X"
+
+    # Handle common proper-noun tags first.
+    if flag in {"nr", "nrfg", "nrf", "nrj", "nrt", "ns", "nt", "nz"}:
+        return "PROPN"
+
+    # Jieba tagset: https://github.com/fxsjy/jieba
+    head = flag[0]
+    if head == "n":
+        return "NOUN"
+    if head == "v":
+        return "VERB"
+    if head == "a":
+        return "ADJ"
+    if head == "d":
+        return "ADV"
+    if head == "r":
+        return "PRON"
+    if head == "m":
+        return "NUM"
+    if head == "q":
+        return "NUM"
+    if head == "p":
+        return "ADP"
+    if head == "c":
+        return "CCONJ"
+    if head == "u":
+        return "PART"
+    if head == "w":
+        return "PUNCT"
+    return "X"
+
 
 @dataclass(frozen=True)
 class PinyinizeOptions:
     resources: PinyinResources
+    # If None: auto (use ollama if llm_adapter provided else greedy).
+    # If set: run each segmenter in order and return one result per segmenter.
+    segmenters: tuple[SegmenterName, ...] | None = None
     interactive: bool = False
     # If True, add spaces between han pinyin and adjacent protected word-like spans.
     word_like_spacing: bool = True
@@ -48,6 +85,7 @@ class PinyinizeOptions:
 
 @dataclass(frozen=True)
 class PinyinizeResult:
+    segmenter: SegmenterName
     output_text: str
     report: dict[str, Any]
 
@@ -331,6 +369,100 @@ def _tokens_from_spans_llm_or_fallback(
 
     meta["invalid_spans"] = invalid_spans
     meta["warnings"] = response.get("warnings", [])
+    return tokens, meta
+
+
+def _tokens_from_spans_jieba_or_fallback(
+    spans: list[Span],
+    word_pinyin: dict[str, str],
+) -> tuple[list[Token], dict[str, Any]]:
+    """
+    Returns (tokens, meta).
+    meta contains import/segmentation errors and invalid span ids for reporting.
+    """
+    han_spans = [sp for sp in spans if sp.type == "han"]
+    meta: dict[str, Any] = {"used": False}
+    if not han_spans:
+        return [], meta
+
+    try:
+        import jieba.posseg as _pseg  # type: ignore[import-not-found]
+    except Exception as e:  # noqa: BLE001
+        meta["error"] = f"jieba_import_error:{e}"
+        return _tokens_from_spans_fallback(spans, word_pinyin), meta
+
+    meta["used"] = True
+    invalid_spans: list[str] = []
+    tokens: list[Token] = []
+    max_len_by_fc = _build_max_len_by_first_char(word_pinyin)
+
+    def fallback_for_span(sp: Span) -> None:
+        seg = _segment_fmm(sp.text, word_pinyin, max_len_by_fc)
+        cursor = sp.start
+        for idx, t in enumerate(seg):
+            start = cursor
+            end = cursor + len(t)
+            tokens.append(
+                Token(
+                    span_id=sp.span_id,
+                    index_in_span=idx,
+                    start=start,
+                    end=end,
+                    text=t,
+                    upos="X",
+                    xpos="UNK",
+                    ner="O",
+                )
+            )
+            cursor = end
+
+    for sp in spans:
+        if sp.type != "han":
+            continue
+
+        try:
+            pairs = list(_pseg.cut(sp.text))
+        except Exception as e:  # noqa: BLE001
+            invalid_spans.append(sp.span_id)
+            meta.setdefault("span_errors", {})[sp.span_id] = f"jieba_cut_exception:{e}"
+            fallback_for_span(sp)
+            continue
+
+        parts: list[tuple[str, str]] = []
+        ok = True
+        for p in pairs:
+            w = getattr(p, "word", None)
+            f = getattr(p, "flag", None)
+            if not isinstance(w, str) or not w:
+                ok = False
+                break
+            parts.append((w, f if isinstance(f, str) else ""))
+
+        if not ok or "".join(w for (w, _) in parts) != sp.text:
+            invalid_spans.append(sp.span_id)
+            fallback_for_span(sp)
+            continue
+
+        cursor = sp.start
+        for idx, (w, f) in enumerate(parts):
+            start = cursor
+            end = cursor + len(w)
+            upos = _jieba_flag_to_upos(f)
+            tokens.append(
+                Token(
+                    span_id=sp.span_id,
+                    index_in_span=idx,
+                    start=start,
+                    end=end,
+                    text=w,
+                    upos=upos,
+                    xpos=f or "UNK",
+                    ner="O",
+                )
+            )
+            cursor = end
+
+    meta["invalid_spans"] = invalid_spans
     return tokens, meta
 
 
@@ -774,43 +906,73 @@ def _apply_llm_double_check(
     return meta
 
 
-def pinyinize(text: str, options: PinyinizeOptions) -> PinyinizeResult:
+def _pinyinize_single(
+    text: str,
+    options: PinyinizeOptions,
+    *,
+    segmenter: SegmenterName,
+    spans: list[Span],
+    combined_word_pinyin: dict[str, str],
+) -> PinyinizeResult:
     import sys
-    
-    def _debug_step(step_name: str, data: Any) -> None:
-        if options.debug:
-            print(f"\n{'='*60}", file=sys.stderr)
-            print(f"[DEBUG] {step_name}", file=sys.stderr)
-            print(f"{'='*60}", file=sys.stderr)
-            if isinstance(data, (list, dict)):
-                print(json.dumps(data, ensure_ascii=False, indent=2), file=sys.stderr)
-            else:
-                print(data, file=sys.stderr)
-    
-    spans = split_spans(text)
-    _debug_step("Step 1: Preprocessing - Split spans", [
-        {"span_id": sp.span_id, "type": sp.type, "kind": sp.kind, 
-         "start": sp.start, "end": sp.end, "text": sp.text}
-        for sp in spans
-    ])
-    
-    resources = options.resources
-    combined_word_pinyin = resources.combined_word_pinyin()
 
-    tokens, llm_meta = _tokens_from_spans_llm_or_fallback(
-        spans, combined_word_pinyin, options.llm_adapter
+    resources = options.resources
+
+    def _debug_step(step_name: str, data: Any) -> None:
+        if not options.debug:
+            return
+        print(f"\n{'='*60}", file=sys.stderr)
+        print(f"[DEBUG] {segmenter} | {step_name}", file=sys.stderr)
+        print(f"{'='*60}", file=sys.stderr)
+        if isinstance(data, (list, dict)):
+            print(json.dumps(data, ensure_ascii=False, indent=2), file=sys.stderr)
+        else:
+            print(data, file=sys.stderr)
+
+    llm_segment_meta: dict[str, Any] = {"used": False}
+    if segmenter == "greedy":
+        tokens = _tokens_from_spans_fallback(spans, combined_word_pinyin)
+        segment_meta: dict[str, Any] = {"segmenter": "greedy", "used": True}
+    elif segmenter == "ollama":
+        tokens, llm_segment_meta = _tokens_from_spans_llm_or_fallback(
+            spans, combined_word_pinyin, options.llm_adapter
+        )
+        segment_meta = dict(llm_segment_meta)
+        segment_meta.setdefault("segmenter", "ollama")
+        llm_segment_meta.setdefault("segmenter", "ollama")
+        if not options.llm_adapter:
+            segment_meta.setdefault("error", "llm_adapter_not_provided")
+            llm_segment_meta.setdefault("error", "llm_adapter_not_provided")
+    elif segmenter == "jieba":
+        tokens, segment_meta = _tokens_from_spans_jieba_or_fallback(spans, combined_word_pinyin)
+        segment_meta.setdefault("segmenter", "jieba")
+    else:
+        tokens = _tokens_from_spans_fallback(spans, combined_word_pinyin)
+        segment_meta = {
+            "segmenter": "greedy",
+            "used": True,
+            "warnings": [f"unknown_segmenter_fallback:{segmenter}"],
+        }
+
+    _debug_step(
+        "Step 2: Tokenization",
+        {
+            "meta": segment_meta,
+            "tokens": [
+                {
+                    "span_id": tok.span_id,
+                    "index_in_span": tok.index_in_span,
+                    "start": tok.start,
+                    "end": tok.end,
+                    "text": tok.text,
+                    "upos": tok.upos,
+                    "xpos": tok.xpos,
+                    "ner": tok.ner,
+                }
+                for tok in tokens
+            ],
+        },
     )
-    _debug_step("Step 2: Tokenization (LLM or Fallback)", {
-        "llm_used": llm_meta.get("used", False),
-        "llm_error": llm_meta.get("error"),
-        "invalid_spans": llm_meta.get("invalid_spans", []),
-        "tokens": [
-            {"span_id": tok.span_id, "index_in_span": tok.index_in_span,
-             "start": tok.start, "end": tok.end, "text": tok.text,
-             "upos": tok.upos, "xpos": tok.xpos, "ner": tok.ner}
-            for tok in tokens
-        ]
-    })
 
     token_pinyin: dict[tuple[int, int], str] = {}
     token_decisions: dict[tuple[int, int], list[CharDecision]] = {}
@@ -822,46 +984,50 @@ def pinyinize(text: str, options: PinyinizeOptions) -> PinyinizeResult:
         token_pinyin[(tok.start, tok.end)] = py
         token_decisions[(tok.start, tok.end)] = decisions
         warnings.extend(w)
-        
+
         if options.debug:
-            debug_token_analysis.append({
-                "token_text": tok.text,
-                "start": tok.start,
-                "end": tok.end,
-                "upos": tok.upos,
-                "ner": tok.ner,
-                "final_pinyin": py,
-                "char_decisions": [
-                    {
-                        "char": d.char,
-                        "offset": d.offset_in_token,
-                        "candidates": d.candidates,
-                        "chosen": d.chosen,
-                        "resolved_by": d.resolved_by,
-                        "confidence": d.confidence,
-                        "needs_review": d.needs_review,
-                    }
-                    for d in decisions
-                ]
-            })
-    
-    _debug_step("Step 3: Token Analysis (Word/CharBase/Polyphone lookup)", debug_token_analysis)
+            debug_token_analysis.append(
+                {
+                    "token_text": tok.text,
+                    "start": tok.start,
+                    "end": tok.end,
+                    "upos": tok.upos,
+                    "ner": tok.ner,
+                    "final_pinyin": py,
+                    "char_decisions": [
+                        {
+                            "char": d.char,
+                            "offset": d.offset_in_token,
+                            "candidates": d.candidates,
+                            "chosen": d.chosen,
+                            "resolved_by": d.resolved_by,
+                            "confidence": d.confidence,
+                            "needs_review": d.needs_review,
+                        }
+                        for d in decisions
+                    ],
+                }
+            )
+
+    _debug_step("Step 3: Token Analysis", debug_token_analysis)
 
     applied_rules, conflicts = _apply_overrides(tokens, token_decisions, resources.overrides_rules)
-    _debug_step("Step 4: Apply Overrides", {
-        "applied_rules": [
-            {"rule_id": r.rule_id, "token": r.token_text, "char": r.target_char, "choose": r.choose}
-            for r in applied_rules
-        ],
-        "conflicts": conflicts
-    })
+    _debug_step(
+        "Step 4: Apply Overrides",
+        {
+            "applied_rules": [
+                {"rule_id": r.rule_id, "token": r.token_text, "char": r.target_char, "choose": r.choose}
+                for r in applied_rules
+            ],
+            "conflicts": conflicts,
+        },
+    )
 
-    # LLM double check (optional)
     review_items_before = _collect_review_items(
         tokens, token_decisions, threshold=options.double_check_threshold
     )
-    _debug_step("Step 5: Items needing review before double-check", review_items_before)
-    
+    _debug_step("Step 5: Needs Review (pre double-check)", review_items_before)
+
     double_check_meta = _apply_llm_double_check(
         options.double_check_adapter,
         text=text,
@@ -870,15 +1036,18 @@ def pinyinize(text: str, options: PinyinizeOptions) -> PinyinizeResult:
         token_decisions=token_decisions,
         review_items=review_items_before,
     )
-    _debug_step("Step 6: LLM Double Check", {
-        "used": double_check_meta.get("used"),
-        "error": double_check_meta.get("error"),
-        "applied": double_check_meta.get("applied", []),
-        "needs_user": double_check_meta.get("needs_user", []),
-        "warnings": double_check_meta.get("warnings", []),
-    })
+    _debug_step(
+        "Step 6: LLM Double Check",
+        {
+            "used": double_check_meta.get("used"),
+            "error": double_check_meta.get("error"),
+            "applied": double_check_meta.get("applied", []),
+            "needs_user": double_check_meta.get("needs_user", []),
+            "warnings": double_check_meta.get("warnings", []),
+        },
+    )
 
-    # Rebuild token pinyin after overrides.
+    # Rebuild token pinyin after overrides/double-check.
     for tok in tokens:
         key = (tok.start, tok.end)
         decisions = token_decisions.get(key) or []
@@ -920,10 +1089,7 @@ def pinyinize(text: str, options: PinyinizeOptions) -> PinyinizeResult:
         prev_was_han = False
 
     output_text = "".join(out_parts)
-    _debug_step("Step 7: Output Stitching", {
-        "output_parts": out_parts,
-        "final_output": output_text
-    })
+    _debug_step("Step 7: Output Stitching", {"final_output": output_text})
 
     review_items_after = _collect_review_items(
         tokens, token_decisions, threshold=options.double_check_threshold
@@ -964,6 +1130,7 @@ def pinyinize(text: str, options: PinyinizeOptions) -> PinyinizeResult:
     report = {
         "schema_version": 1,
         "text": text,
+        "segmenter": segmenter,
         "spans": [
             {
                 "span_id": sp.span_id,
@@ -976,7 +1143,8 @@ def pinyinize(text: str, options: PinyinizeOptions) -> PinyinizeResult:
             for sp in spans
         ],
         "tokens": report_tokens,
-        "llm_segment_and_tag": llm_meta,
+        "segment_and_tag": segment_meta,
+        "llm_segment_and_tag": llm_segment_meta,
         "llm_double_check": double_check_meta,
         "needs_review_items": review_items_after,
         "unresolved_fallback": bool(review_items_after) and not (
@@ -998,4 +1166,63 @@ def pinyinize(text: str, options: PinyinizeOptions) -> PinyinizeResult:
         "warnings": warnings,
     }
 
-    return PinyinizeResult(output_text=output_text, report=report)
+    return PinyinizeResult(segmenter=segmenter, output_text=output_text, report=report)
+
+
+def pinyinize(text: str, options: PinyinizeOptions) -> list[PinyinizeResult]:
+    import sys
+
+    spans = split_spans(text)
+    if options.debug:
+        print(f"\n{'='*60}", file=sys.stderr)
+        print("[DEBUG] preprocessing | Split spans", file=sys.stderr)
+        print(f"{'='*60}", file=sys.stderr)
+        print(
+            json.dumps(
+                [
+                    {
+                        "span_id": sp.span_id,
+                        "type": sp.type,
+                        "kind": sp.kind,
+                        "start": sp.start,
+                        "end": sp.end,
+                        "text": sp.text,
+                    }
+                    for sp in spans
+                ],
+                ensure_ascii=False,
+                indent=2,
+            ),
+            file=sys.stderr,
+        )
+
+    resources = options.resources
+    combined_word_pinyin = resources.combined_word_pinyin()
+
+    if options.segmenters is None:
+        segmenters: list[SegmenterName] = ["ollama"] if options.llm_adapter else ["greedy"]
+    else:
+        segmenters = list(options.segmenters)
+
+    # De-dup while preserving order.
+    seen: set[SegmenterName] = set()
+    segmenters2: list[SegmenterName] = []
+    for s in segmenters:
+        if s in seen:
+            continue
+        seen.add(s)
+        segmenters2.append(s)
+
+    if not segmenters2:
+        segmenters2 = ["ollama"] if options.llm_adapter else ["greedy"]
+
+    return [
+        _pinyinize_single(
+            text,
+            options,
+            segmenter=seg,
+            spans=spans,
+            combined_word_pinyin=combined_word_pinyin,
+        )
+        for seg in segmenters2
+    ]
