@@ -709,9 +709,8 @@ yínháng hángzhǎng chóngxīn yíngyè，OpenAI API v2.0：https://openai.com
 ## 16. 实现提示（给 codex/gemini-cli 的工程化注意点）
 
 * 强烈建议把 LLM 调用封装为 `LLMAdapter` 接口，便于：
-
-  * mock 测试（无 key 也能跑）
   * 切换 gemini/openai/本地模型
+  (注意不 mock)
 * 规则引擎必须是纯函数式/可测试的：
 
   * 输入：tokens + candidates + rules
