@@ -117,6 +117,7 @@ def main(argv: list[str] | None = None) -> int:
 
             exp_norm = normalize_expected(expected)
             act_norms = [(seg, normalize_actual(out)) for (seg, out) in actual_by_segmenter]
+            # 只要 results list 里有一个命中即可
             matched_seg = None
             for seg, norm in act_norms:
                 if exp_norm == norm:
