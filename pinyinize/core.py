@@ -654,76 +654,121 @@ def _apply_overrides(
         if not isinstance(target_char, str) or not target_char:
             continue
 
+        match = rule.get("match") or {}
+        self_part = match.get("self") if isinstance(match, dict) else None
+        self_text = self_part.get("text") if isinstance(self_part, dict) else None
+        self_text_len = len(self_text) if isinstance(self_text, str) else None
+
         for span_tokens in span_to_tokens.values():
-            for i, tok in enumerate(span_tokens):
-                if target_char not in tok.text:
+            for i in range(len(span_tokens)):
+                # If rule specifies an exact self.text, allow it to match across multiple tokens
+                # by creating a virtual "window token" over consecutive tokens whose concatenated
+                # text length equals len(self.text).
+                if isinstance(self_text_len, int) and self_text_len > 0:
+                    window_tokens: list[Token] = []
+                    total_len = 0
+                    j = i
+                    while j < len(span_tokens) and total_len < self_text_len:
+                        window_tokens.append(span_tokens[j])
+                        total_len += len(span_tokens[j].text)
+                        j += 1
+                    if total_len != self_text_len:
+                        continue
+                else:
+                    window_tokens = [span_tokens[i]]
+                    j = i + 1
+
+                window_text = "".join(t.text for t in window_tokens)
+                if target_char not in window_text:
                     continue
+
+                window_tok = Token(
+                    span_id=window_tokens[0].span_id,
+                    index_in_span=window_tokens[0].index_in_span,
+                    start=window_tokens[0].start,
+                    end=window_tokens[-1].end,
+                    text=window_text,
+                    upos=window_tokens[0].upos,
+                    xpos=window_tokens[0].xpos,
+                    ner=window_tokens[0].ner,
+                )
+
                 prev_tok = span_tokens[i - 1] if i > 0 else None
-                next_tok = span_tokens[i + 1] if i + 1 < len(span_tokens) else None
-                if not rule_matches(rule, tok, prev_tok, next_tok):
+                next_tok = span_tokens[j] if j < len(span_tokens) else None
+                if not rule_matches(rule, window_tok, prev_tok, next_tok):
                     continue
 
-                key = (tok.start, tok.end)
-                decisions = token_decisions.get(key)
-                if not decisions:
+                occ_offsets = [k for k, ch in enumerate(window_text) if ch == target_char]
+                if not occ_offsets:
                     continue
 
-                positions = [d.offset_in_token for d in decisions if d.char == target_char]
-                if not positions:
-                    continue
+                def apply_global_offset(global_offset: int) -> None:
+                    cursor = 0
+                    for t in window_tokens:
+                        L = len(t.text)
+                        if global_offset < cursor + L:
+                            local_offset = global_offset - cursor
+                            key = (t.start, t.end)
+                            decisions = token_decisions.get(key) or []
+                            if not (0 <= local_offset < len(decisions)):
+                                return
+                            dec = decisions[local_offset]
+                            if dec.char != target_char:
+                                return
 
-                def apply_at(pos: int) -> None:
-                    dec = decisions[pos]
-                    if dec.char != target_char:
-                        return
-                    if dec.chosen == choose:
-                        dec.notes.append(f"override_reaffirm:{rid}")
-                        # Still mark as override to prevent lower-priority rules from changing it
-                        dec.resolved_by = "override"
-                        dec.rule_id = rid
-                        return
-                    if dec.resolved_by == "override" and dec.rule_id and dec.rule_id != rid:
-                        dec.conflict = True
-                        conflicts.append(
-                            {
-                                "type": "override_conflict",
-                                "token": tok.text,
-                                "token_start": tok.start,
-                                "token_end": tok.end,
-                                "char": target_char,
-                                "offset_in_token": pos,
-                                "existing_rule_id": dec.rule_id,
-                                "existing_choose": dec.chosen,
-                                "new_rule_id": rid,
-                                "new_choose": choose,
-                            }
-                        )
-                        return
+                            if dec.chosen == choose:
+                                dec.notes.append(f"override_reaffirm:{rid}")
+                                dec.resolved_by = "override"
+                                dec.rule_id = rid
+                                return
 
-                    dec.chosen = choose
-                    dec.resolved_by = "override"
-                    dec.rule_id = rid
-                    dec.needs_review = False
-                    applied.append(
-                        AppliedRule(
-                            rule_id=rid,
-                            token_start=tok.start,
-                            token_end=tok.end,
-                            token_text=tok.text,
-                            target_char=target_char,
-                            occurrence=str(occurrence),
-                            choose=choose,
-                        )
-                    )
+                            if dec.resolved_by == "override" and dec.rule_id and dec.rule_id != rid:
+                                dec.conflict = True
+                                conflicts.append(
+                                    {
+                                        "type": "override_conflict",
+                                        "token": t.text,
+                                        "token_start": t.start,
+                                        "token_end": t.end,
+                                        "window_text": window_text,
+                                        "window_start": window_tok.start,
+                                        "window_end": window_tok.end,
+                                        "char": target_char,
+                                        "offset_in_token": local_offset,
+                                        "existing_rule_id": dec.rule_id,
+                                        "existing_choose": dec.chosen,
+                                        "new_rule_id": rid,
+                                        "new_choose": choose,
+                                    }
+                                )
+                                return
+
+                            dec.chosen = choose
+                            dec.resolved_by = "override"
+                            dec.rule_id = rid
+                            dec.needs_review = False
+                            applied.append(
+                                AppliedRule(
+                                    rule_id=rid,
+                                    token_start=window_tok.start,
+                                    token_end=window_tok.end,
+                                    token_text=window_text,
+                                    target_char=target_char,
+                                    occurrence=str(occurrence),
+                                    choose=choose,
+                                )
+                            )
+                            return
+                        cursor += L
 
                 if occurrence == "all":
-                    for pos in positions:
-                        apply_at(pos)
+                    for off in occ_offsets:
+                        apply_global_offset(off)
                     continue
 
                 if isinstance(occurrence, int) and occurrence >= 1:
-                    if occurrence <= len(positions):
-                        apply_at(positions[occurrence - 1])
+                    if occurrence <= len(occ_offsets):
+                        apply_global_offset(occ_offsets[occurrence - 1])
                     continue
 
     return applied, conflicts
