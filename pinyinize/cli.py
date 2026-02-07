@@ -77,6 +77,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--ollama-host", default="http://localhost:11434", help="Ollama host URL.")
     parser.add_argument("--no-double-check", action="store_true", help="Disable LLM double-check step.")
     parser.add_argument("--interactive", action="store_true", help="Prompt for unresolved readings and write overrides.json.")
+    parser.add_argument("--debug", action="store_true", help="Print intermediate processing steps.")
     args = parser.parse_args(argv)
 
     text = args.text
@@ -98,6 +99,7 @@ def main(argv: list[str] | None = None) -> int:
         word_like_spacing=not args.no_word_like_spacing,
         llm_adapter=llm_adapter,
         double_check_adapter=double_check_adapter,
+        debug=args.debug,
     )
     res = pinyinize(text, opts)
 
@@ -172,6 +174,7 @@ def main(argv: list[str] | None = None) -> int:
             word_like_spacing=not args.no_word_like_spacing,
             llm_adapter=llm_adapter,
             double_check_adapter=double_check_adapter,
+            debug=args.debug,
         )
         res = pinyinize(text, opts2)
 

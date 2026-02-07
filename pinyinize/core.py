@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -42,6 +43,7 @@ class PinyinizeOptions:
     llm_adapter: Any | None = None
     double_check_adapter: Any | None = None
     double_check_threshold: float = 0.85
+    debug: bool = False
 
 
 @dataclass(frozen=True)
@@ -686,30 +688,93 @@ def _apply_llm_double_check(
 
 
 def pinyinize(text: str, options: PinyinizeOptions) -> PinyinizeResult:
+    import sys
+    
+    def _debug_step(step_name: str, data: Any) -> None:
+        if options.debug:
+            print(f"\n{'='*60}", file=sys.stderr)
+            print(f"[DEBUG] {step_name}", file=sys.stderr)
+            print(f"{'='*60}", file=sys.stderr)
+            if isinstance(data, (list, dict)):
+                print(json.dumps(data, ensure_ascii=False, indent=2), file=sys.stderr)
+            else:
+                print(data, file=sys.stderr)
+    
     spans = split_spans(text)
+    _debug_step("Step 1: Preprocessing - Split spans", [
+        {"span_id": sp.span_id, "type": sp.type, "kind": sp.kind, 
+         "start": sp.start, "end": sp.end, "text": sp.text}
+        for sp in spans
+    ])
+    
     resources = options.resources
     combined_word_pinyin = resources.combined_word_pinyin()
 
     tokens, llm_meta = _tokens_from_spans_llm_or_fallback(
         spans, combined_word_pinyin, options.llm_adapter
     )
+    _debug_step("Step 2: Tokenization (LLM or Fallback)", {
+        "llm_used": llm_meta.get("used", False),
+        "llm_error": llm_meta.get("error"),
+        "invalid_spans": llm_meta.get("invalid_spans", []),
+        "tokens": [
+            {"span_id": tok.span_id, "index_in_span": tok.index_in_span,
+             "start": tok.start, "end": tok.end, "text": tok.text,
+             "upos": tok.upos, "xpos": tok.xpos, "ner": tok.ner}
+            for tok in tokens
+        ]
+    })
 
     token_pinyin: dict[tuple[int, int], str] = {}
     token_decisions: dict[tuple[int, int], list[CharDecision]] = {}
     warnings: list[str] = []
 
+    debug_token_analysis: list[dict[str, Any]] = []
     for tok in tokens:
         py, decisions, w = _analyze_token(tok, combined_word_pinyin, resources)
         token_pinyin[(tok.start, tok.end)] = py
         token_decisions[(tok.start, tok.end)] = decisions
         warnings.extend(w)
+        
+        if options.debug:
+            debug_token_analysis.append({
+                "token_text": tok.text,
+                "start": tok.start,
+                "end": tok.end,
+                "upos": tok.upos,
+                "ner": tok.ner,
+                "final_pinyin": py,
+                "char_decisions": [
+                    {
+                        "char": d.char,
+                        "offset": d.offset_in_token,
+                        "candidates": d.candidates,
+                        "chosen": d.chosen,
+                        "resolved_by": d.resolved_by,
+                        "confidence": d.confidence,
+                        "needs_review": d.needs_review,
+                    }
+                    for d in decisions
+                ]
+            })
+    
+    _debug_step("Step 3: Token Analysis (Word/CharBase/Polyphone lookup)", debug_token_analysis)
 
     applied_rules, conflicts = _apply_overrides(tokens, token_decisions, resources.overrides_rules)
+    _debug_step("Step 4: Apply Overrides", {
+        "applied_rules": [
+            {"rule_id": r.rule_id, "token": r.token_text, "char": r.target_char, "choose": r.choose}
+            for r in applied_rules
+        ],
+        "conflicts": conflicts
+    })
 
     # LLM double check (optional)
     review_items_before = _collect_review_items(
         tokens, token_decisions, threshold=options.double_check_threshold
     )
+    _debug_step("Step 5: Items needing review before double-check", review_items_before)
+    
     double_check_meta = _apply_llm_double_check(
         options.double_check_adapter,
         text=text,
@@ -718,6 +783,13 @@ def pinyinize(text: str, options: PinyinizeOptions) -> PinyinizeResult:
         token_decisions=token_decisions,
         review_items=review_items_before,
     )
+    _debug_step("Step 6: LLM Double Check", {
+        "used": double_check_meta.get("used"),
+        "error": double_check_meta.get("error"),
+        "applied": double_check_meta.get("applied", []),
+        "needs_user": double_check_meta.get("needs_user", []),
+        "warnings": double_check_meta.get("warnings", []),
+    })
 
     # Rebuild token pinyin after overrides.
     for tok in tokens:
@@ -761,6 +833,10 @@ def pinyinize(text: str, options: PinyinizeOptions) -> PinyinizeResult:
         prev_was_han = False
 
     output_text = "".join(out_parts)
+    _debug_step("Step 7: Output Stitching", {
+        "output_parts": out_parts,
+        "final_output": output_text
+    })
 
     review_items_after = _collect_review_items(
         tokens, token_decisions, threshold=options.double_check_threshold
